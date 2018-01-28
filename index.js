@@ -87,12 +87,31 @@ app.get("/baidu_oauth_callback",loginInterceptor,(req,res,next)=>{
 
 app.get("/bot_service",(req,res,next)=>{
     //TODO smart home bot服务接口
+    //TODO 发现的逻辑
+    //TODO 控制命令下发的逻辑
 });
 
 //redirect_uri: local_bridge的地址
 app.get("/get_control_key",loginInterceptor,(req,res,next)=>{
     //TODO smart home bot服务接口
 });
+
+
+let server = require('http').Server(app);
+let io = require('socket.io')(server);
+io.on('connection', function (socket) {
+    //socket.emit('to_client', message.getJSON());
+    socket.on('disconnect', function () {
+        //TODO remove connetion from connetion manager
+    });
+    socket.on('login', function (request) {
+        if(request.key){
+            //TODO  check key, add to connetion manager
+        }
+    });
+});
+
+server.listen(3000);
 
 //跳转流程：
 //http://local.bridge/brige/get_control_key
