@@ -3,32 +3,66 @@ const express = require('express');
 const request = require('request');
 const bodyParser = require('body-parser');
 const config = require('./config');
+const cookieParser = require('cookie-parser');
 const fs = require('fs');
+const ejs = require("ejs");
+const utils = require("./utils");
+
 
 
 let app = express();
+let models = require("./models");
+
+
+app.set('views',__dirname + '/views');
+app.engine('.html', ejs.__express);
+app.set("view engine", "html"); 
+app.use(express.static(__dirname + '/webroot'));
 
 app.use(bodyParser.json()); // for parsing application/json
 app.use(bodyParser.urlencoded({ extended: true })); // for parsing application/x-www-form-urlencoded
+app.use(cookieParser());
+
+const SESSION_ID_NAME="_session_id";
 
 function loginInterceptor(req,res,next){
-    //TODO
     //如果没有session，就重定向到百度第三方登录
+    let sessionId = req.cookies[SESSION_ID_NAME];
+    if(!sessionId){
+        res.send(JSON.stringify({"status":1,"message":"not login 1"}));
+    }
+    let session=models.Session.findById(sessionId);
+    if(!session){
+        res.send(JSON.stringify({"status":1,"message":"not login"}));
+    }
+    req.locals.session=session;
+    next();
 }
 //
 app.get("/login",(req,res,next)=>{
-    //TODO 跳转到baidu_oauth地址做第三方登录config.baidu_oauth.callback_url
+    //跳转到baidu_oauth地址做第三方登录config.baidu_oauth.callback_url
     // state参数是一个json，里面有redirect_uri
     //生成Session，重定向到"/" 或 state.redirect_uri
+    let url=config.baidu_oauth.callback_url+"/baidu_oauth_callback";
+    res.redirect("https://openapi.baidu.com/oauth/2.0/authorize?response_type=code&client_id="+config.baidu_oauth.client_id+"&redirect_uri="+encodeURIComponent(url)+"&scope=basic&display=mobile");
 });
+
+app.get("/logout",(req,res,next)=>{
+    res.clearCookie(SESSION_ID_NAME, {});
+});
+
 
 //首页，显示用户的所有设备、控制用的长连接状态（和bridge服务的连接状态）
 app.get("/",loginInterceptor,(req,res,next)=>{
-    //TODO  带code跳转到redirect_uri
+    let session=req.locals.session;
+    let devices=models.Device.find({"user_id":session.user_id},);
+    res.render("index",{
+        devices
+    });
 });
 
 //dueros用户获得授权
-//参考百度oauth接口
+//自由oauth授权dueros，参考百度oauth接口
 //https://openapi.baidu.com/oauth/2.0/authorize?
 //  response_type=code&
 //  client_id=Va5yQRHlA4Fq4eR3LT0vuXV4&
@@ -36,8 +70,33 @@ app.get("/",loginInterceptor,(req,res,next)=>{
 //  redirect_uri=http%3A%2F%2Fwww.example.com%2Foauth_redirect&
 //  scope=email&
 //  display=popup
-app.get("/oauth/auth",loginInterceptor,(req,res,next)=>{
-    //TODO  带code跳转到redirect_uri
+app.get("/oauth/auth",loginInterceptor,async (req,res,next)=>{
+    //生成code，然后带code跳转到redirect_uri
+    if(req.query.response_type!=="code"){
+        res.send(JSON.stringify({"status":2,"message":"unsupported response_type"}));
+        return;
+    }
+    let client=models.Client.findOne({_id:client_id});
+    if(!client){
+        res.send(JSON.stringify({"status":3,"message":"unknown client_id"}));
+        return;
+    }
+    let redirect_uri=req.query.redirect_uri;
+    let state=req.query.state?req.query.state:"";
+    let code=new models.OauthCode();
+
+    code.code=utils.uuid();
+    code.redirect_uri=redirect_uri;
+    code.state=state;
+    code.client_id=client_id;
+    code.user_id=req.locals.session.user_id;
+    await code.save();
+    
+    let spliter=redirect_uri.indexOf("?")==-1 ? "?":"&";
+    res.redirect(redirect_uri+spliter
+        + (state?"state="+encodeURIComponent(state):"")
+        +"code="+encodeURIComponent(code.code)
+    );
 });
 
 
@@ -58,7 +117,37 @@ app.get("/oauth/auth",loginInterceptor,(req,res,next)=>{
 //    client_id=Va5yQRHlA4Fq4eR3LT0vuXV4&
 //    client_secret= 0rDSjzQ20XUj5itV7WRtznPQSzr5pVw2&
 //    scope=email
-app.all("/oauth/token",loginInterceptor,(req,res,next)=>{
+app.all("/oauth/token",loginInterceptor,async (req,res,next)=>{
+    if(["refresh_token","authorization_code"].indexOf(req.query.response_type)==-1){
+        res.send(JSON.stringify({"status":2,"message":"unsupported response_type"}));
+        return;
+    }
+    let client=models.Client.findOne({
+        _id:client_id,
+        secret:req.query.client_secret
+    });
+    if(!client){
+        res.send(JSON.stringify({"status":3,"message":"unknown client_id"}));
+        return;
+    }
+    if(req.query.response_type=="authorization_code"){
+        let oauthCode = await models.OauthCode.find({code:req.query.code})
+        //TODO check redirect_uri
+        if(!oauthCode){
+            res.send(JSON.stringify({"status":4,"message":"unknown code"}));
+            return;
+        }
+        let accessToken = await generateAccessToken(client,oauthCode);
+        res.send(JSON.stringify({
+            "access_token": accessToken.access_token,
+            "expires_in": 86400,
+            "refresh_token": access_token.refresh_token,
+            "scope": "basic",
+            "session_key": access_token.session_key,
+            "session_secret": access_token.session_secret,
+        }));
+        return;
+    }
     //TODO  code换token，返回json
     //HTTP/1.1 200 OK
     //Content-Type: application/json

@@ -35,6 +35,9 @@ const AccessToken =mongoose.model("AccessToken", new Schema({
     //id : ObjectId,
     access_token: { type: String, default: '' },
     refresh_token: { type: String, default: '' },
+    session_key : { type: String, default: '' },
+    session_secret: { type: String, default: '' },
+    refresh_token: { type: String, default: '' },
     expire_time: { type: Date, default: ()=>{
         let time=Date.now()+86400*30*1000;
         let d=new Date();
@@ -56,6 +59,7 @@ const OauthCode=mongoose.model('OauthCode',new Schema({
     client_id:ObjectId,
     redirect_uri:{ type: String, default: '' },
     user_id:ObjectId,
+    state:{ type: String, default: '' },
 }));
 
 module.exports={

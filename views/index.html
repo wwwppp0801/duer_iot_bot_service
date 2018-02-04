@@ -1,0 +1,21 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8"/>
+<title> iot bridge </title>
+</head>
+<body>
+    
+    <h1>个人信息</h1>
+    <%= JSON.stringify(session)%>
+    <br/>
+    <a href="/login">重新登录</a>
+    <h1>设备列表</h1>
+    <ul>
+    <% devices.forEach((device)=>{ %>
+        <li><%=JSON.stringify(device)%></li>
+    <% }) %>
+    </ul>
+</body>
+</html>
+
