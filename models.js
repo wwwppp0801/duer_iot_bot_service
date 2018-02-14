@@ -3,13 +3,17 @@ mongoose.connect('mongodb://localhost:27017/duer_bridge_bot_service');
 
 const utils = require("./utils");
 
-const Schema = mongoose.Schema,
-    ObjectId = Schema.ObjectId;
+const Schema = mongoose.Schema;
+const ObjectId = mongoose.Schema.ObjectId;
 
 const User = mongoose.model("User",new Schema({
     //id : ObjectId,
     baidu_open_id: { type: String, default: '' },
     bridge_key: { type: String, default: '' },
+    access_token: { type: String, default: '' },
+    refresh_token: { type: String, default: '' },
+    baidu_name: { type: String, default: '' },
+    baidu_portrait: { type: String, default: '' },
 }));
 
 
@@ -67,6 +71,7 @@ module.exports={
     Client,
     OauthCode,
     Session,
+    Device,
 };
 
 (async ()=>{

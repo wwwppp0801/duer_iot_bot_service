@@ -25,17 +25,20 @@ app.use(cookieParser());
 
 const SESSION_ID_NAME="_session_id";
 
-function loginInterceptor(req,res,next){
+async function loginInterceptor(req,res,next){
     //如果没有session，就重定向到百度第三方登录
     let sessionId = req.cookies[SESSION_ID_NAME];
-    if(!sessionId){
-        res.send(JSON.stringify({"status":1,"message":"not login 1"}));
+    let session;
+    if(sessionId){
+        session= await models.Session.findById(sessionId);
     }
-    let session=models.Session.findById(sessionId);
     if(!session){
-        res.send(JSON.stringify({"status":1,"message":"not login"}));
+        let originalUrl=config.base_uri + req.originalUrl;
+        res.redirect(config.base_uri +"/login?redirect_uri="+encodeURIComponent(originalUrl));
+        //res.send(JSON.stringify({"status":1,"message":"not login"}));
+        return;
     }
-    req.locals.session=session;
+    res.locals.session=session;
     next();
 }
 //
@@ -43,8 +46,13 @@ app.get("/login",(req,res,next)=>{
     //跳转到baidu_oauth地址做第三方登录config.baidu_oauth.callback_url
     // state参数是一个json，里面有redirect_uri
     //生成Session，重定向到"/" 或 state.redirect_uri
-    let url=config.base_uri+"/baidu_oauth_callback";
-    res.redirect("https://openapi.baidu.com/oauth/2.0/authorize?response_type=code&client_id="+config.baidu_oauth.client_id+"&redirect_uri="+encodeURIComponent(url)+"&scope=basic&display=mobile");
+    let redirect_uri=req.query.redirect_uri;
+    if(!redirect_uri){
+        res.send(JSON.stringify({"status":7,"message":"no redirect_uri"}));
+        return;
+    }
+    let state = {redirect_uri};
+    res.redirect("https://openapi.baidu.com/oauth/2.0/authorize?response_type=code&client_id="+config.baidu_oauth.client_id+"&redirect_uri="+encodeURIComponent(config.baidu_oauth.redirect_uri)+"&scope=basic&display=mobile&state="+encodeURIComponent(JSON.stringify(state)));
 });
 
 app.get("/logout",(req,res,next)=>{
@@ -53,11 +61,13 @@ app.get("/logout",(req,res,next)=>{
 
 
 //首页，显示用户的所有设备、控制用的长连接状态（和bridge服务的连接状态）
-app.get("/",loginInterceptor,(req,res,next)=>{
-    let session=req.locals.session;
-    let devices=models.Device.find({"user_id":session.user_id},);
+app.get("/",loginInterceptor,async (req,res,next)=>{
+    let session=res.locals.session;
+    let devices= await models.Device.find({"user_id":session.user_id});
+    let user = await models.User.findOne({_id:session.user_id});
     res.render("index",{
-        devices
+        devices,
+        user
     });
 });
 
@@ -76,7 +86,7 @@ app.get("/oauth/auth",loginInterceptor,async (req,res,next)=>{
         res.send(JSON.stringify({"status":2,"message":"unsupported response_type"}));
         return;
     }
-    let client=models.Client.findOne({_id:client_id});
+    let client= await models.Client.findOne({_id:client_id});
     if(!client){
         res.send(JSON.stringify({"status":3,"message":"unknown client_id"}));
         return;
@@ -89,7 +99,7 @@ app.get("/oauth/auth",loginInterceptor,async (req,res,next)=>{
     code.redirect_uri=redirect_uri;
     code.state=state;
     code.client_id=client_id;
-    code.user_id=req.locals.session.user_id;
+    code.user_id=res.locals.session.user_id;
     await code.save();
     
     let spliter=redirect_uri.indexOf("?")==-1 ? "?":"&";
@@ -106,7 +116,7 @@ app.all("/oauth/token",loginInterceptor,async (req,res)=>{
         res.send(JSON.stringify({"status":2,"message":"unsupported response_type"}));
         return;
     }
-    let client=models.Client.findOne({
+    let client=await models.Client.findOne({
         _id:req.query.client_id,
         secret:req.query.client_secret
     });
@@ -130,7 +140,7 @@ app.all("/oauth/token",loginInterceptor,async (req,res)=>{
             res.send(JSON.stringify({"status":4,"message":"unknown code"}));
             return;
         }
-        accessToken = await generateAccessToken(client,req.locals.session.user_id);
+        accessToken = await generateAccessToken(client,res.locals.session.user_id);
         //TODO remove oauthCode
     }
     
@@ -142,7 +152,7 @@ app.all("/oauth/token",loginInterceptor,async (req,res)=>{
 //    client_id=Va5yQRHlA4Fq4eR3LT0vuXV4&
 //    client_secret= 0rDSjzQ20XUj5itV7WRtznPQSzr5pVw2&
 //    scope=email
-        accessToken = models.AccessToken.findOne({refresh_token:req.query.refresh_token});
+        accessToken = await models.AccessToken.findOne({refresh_token:req.query.refresh_token});
     }
 
     if(accessToken){
@@ -178,7 +188,7 @@ app.all("/oauth/token",loginInterceptor,async (req,res)=>{
 });
 
 function generateAccessToken(client,user_id){
-    return new Promise((resolve,reject)=>{
+    return new Promise(async (resolve,reject)=>{
         let accessToken=new models.AccessToken();
         accessToken.access_token=utils.uuid();
         accessToken.refresh_token=utils.uuid();
@@ -192,11 +202,106 @@ function generateAccessToken(client,user_id){
 }
 
 
-app.get("/baidu_oauth_callback",loginInterceptor,(req,res,next)=>{
+app.get("/baidu_oauth_callback",async (req,res,next)=>{
     //TODO 就是实现baidu_oauth的callback地址
     // state参数是一个json，里面有redirect_uri
     //生成Session，重定向到"/" 或 state.redirect_uri
-	
+    let code=req.query.code;
+    if(!code){
+        res.send(JSON.stringify(
+            {
+                "status":-1,
+                "msg":"no code"
+            }
+        ));
+        return;
+    }
+    let state;
+    try{
+        state=JSON.parse(req.query.state);
+    }catch(e){}
+
+    if(!state || !state.redirect_uri){
+        res.send(JSON.stringify(
+            {
+                "status":-1,
+                "msg":"no state:"+req.query.state
+            }
+        ));
+        return;
+    }
+    console.log("code:",code);
+    console.log("state:",state);
+    let token_json = await new Promise((resolve,reject)=>{
+        let url='https://openapi.baidu.com/oauth/2.0/token?'+
+            'grant_type=authorization_code&'+
+            'code='+code+'&'+
+            'client_id='+config.baidu_oauth.client_id+'&'+
+            'client_secret='+config.baidu_oauth.client_secret+'&'+
+            'redirect_uri='+config.baidu_oauth.redirect_uri;
+        request({url:url},function (error, response, body) {
+            if (error) {
+                return console.error('request failed: ', error);
+            }
+            console.log('return: ', body);
+            let json;
+            try{
+                json=JSON.parse(body);
+            }catch(e){}
+            if(!json || json.error){
+                res.send(JSON.stringify(
+                    {
+                        "status":-1,
+                        "msg":"get token return fail",
+                        data:json
+                    }
+                ));
+                reject();
+            }
+            resolve(json);
+        });
+    });
+    let baidu_user_json = await new Promise((resolve,reject)=>{
+        request({
+            "url":"https://openapi.baidu.com/rest/2.0/passport/users/getLoggedInUser?access_token="+encodeURIComponent(token_json.access_token),
+        },(error, response, body)=>{
+            console.log('getLoggedInUser return: ', body);
+            let json;
+            try{
+                json=JSON.parse(body);
+            }catch(e){}
+            if(!json || json.error){
+                res.send(JSON.stringify(
+                    {
+                        "status":-1,
+                        "msg":"getLoggedInUser return fail",
+                        data:body
+                    }
+                ));
+                reject();
+            }
+            resolve(json);
+        })
+    });
+    let user=await models.User.findOne({"baidu_open_id":baidu_user_json.uid});
+    if(!user){
+        //create new user
+        user = new models.User();
+        user.baidu_open_id=baidu_user_json.uid;
+        user.bridge_key=utils.uuid();
+        user.access_token=token_json.access_token;
+        user.refresh_token=token_json.refresh_token;
+        user.baidu_name=baidu_user_json.uname;
+        user.baidu_portrait=baidu_user_json.portrait;
+        await user.save();
+    }
+    let session=new models.Session();
+    session.user_id=user._id;
+    await session.save();
+    console.log("session object",session);
+    console.log("setCookie",SESSION_ID_NAME,session._id.toString());
+    res.cookie(SESSION_ID_NAME,session._id.toString(), { maxAge: 900000, httpOnly: true });
+    res.redirect(state.redirect_uri);
 });
 
 app.get("/bot_service",(req,res,next)=>{
@@ -206,8 +311,16 @@ app.get("/bot_service",(req,res,next)=>{
 });
 
 //redirect_uri: local_bridge的地址
-app.get("/get_control_key",loginInterceptor,(req,res,next)=>{
-    //TODO smart home bot服务接口
+app.get("/get_control_key",loginInterceptor,async (req,res,next)=>{
+    
+    let session=res.locals.session;
+    let user = await models.User.findOne({_id:session.user_id});
+    
+    let redirect_uri = req.query.redirect_uri;
+    let spliter=redirect_uri.indexOf("?")==-1 ? "?":"&";
+    res.redirect(redirect_uri+spliter
+        +"key="+encodeURIComponent(user.bridge_key)
+    );
 });
 
 
@@ -228,10 +341,15 @@ io.on('connection', function (socket) {
 server.listen(3000);
 
 //跳转流程：
-//http://local.bridge/brige/get_control_key
-//http://bot.service/brige/get_control_key?redirect_uri={http://local.bridge/control_key_callback}
-//http://bot.service/login?redirect_uri={http://bot.service/brige/get_control_key?redirect_uri={http://local.bridge/control_key_callback}}
-//http://openapi.baidu.com/oauth?redirect_uri={http://bot.service/baidu_oauth_callback}&state={redirect_uri="http://bot.service/brige/get_control_key?redirect_uri={http://local.bridge/control_key_callback}"}
-//http://bot.service/baidu_oauth_callback?code={code}&state={redirect_uri="http://bot.service/brige/get_control_key?redirect_uri={http://local.bridge/control_key_callback}"}
-//http://bot.service/brige/get_control_key?redirect_uri={http://local.bridge/control_key_callback}
+//http://local.bridge/get_control_key
+//http://bot.service/get_control_key?redirect_uri={http://local.bridge/control_key_callback}
+//http://bot.service/login?redirect_uri={http://bot.service/get_control_key?redirect_uri={http://local.bridge/control_key_callback}}
+//http://openapi.baidu.com/oauth?redirect_uri={http://bot.service/baidu_oauth_callback}&state={redirect_uri="http://bot.service/get_control_key?redirect_uri={http://local.bridge/control_key_callback}"}
+//http://bot.service/baidu_oauth_callback?code={code}&state={redirect_uri="http://bot.service/get_control_key?redirect_uri={http://local.bridge/control_key_callback}"}
+//http://bot.service/get_control_key?redirect_uri={http://local.bridge/control_key_callback}
 //http://local.bridge/control_key_callback?key={key}
+//
+//
+//http://192.168.1.101:8080/control_key_callback
+//test url: http://duer-iot.wangp.org/get_control_key?redirect_uri=http%3A%2F%2F192.168.1.101%3A8080%2Fcontrol_key_callback
+//
