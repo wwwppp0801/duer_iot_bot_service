@@ -101,6 +101,21 @@ app.get("/oauth/auth",loginInterceptor,async (req,res,next)=>{
 
 
 //dueros用户获得token
+app.all("/oauth/token",loginInterceptor,async (req,res)=>{
+    if(["refresh_token","authorization_code"].indexOf(req.query.response_type)==-1){
+        res.send(JSON.stringify({"status":2,"message":"unsupported response_type"}));
+        return;
+    }
+    let client=models.Client.findOne({
+        _id:req.query.client_id,
+        secret:req.query.client_secret
+    });
+    if(!client){
+        res.send(JSON.stringify({"status":3,"message":"unknown client_id"}));
+        return;
+    }
+    let accessToken=null;
+    if(req.query.response_type==="authorization_code"){
 //参考百度oauth
 //post or get
 //https://openapi.baidu.com/oauth/2.0/token?
@@ -109,7 +124,17 @@ app.get("/oauth/auth",loginInterceptor,async (req,res,next)=>{
 //	client_id=Va5yQRHlA4Fq4eR3LT0vuXV4&
 //	client_secret=0rDSjzQ20XUj5itV7WRtznPQSzr5pVw2&
 //	redirect_uri=http%3A%2F%2Fwww.example.com%2Foauth_redirect
-
+        let oauthCode = await models.OauthCode.find({code:req.query.code})
+        //TODO check redirect_uri
+        if(!oauthCode){
+            res.send(JSON.stringify({"status":4,"message":"unknown code"}));
+            return;
+        }
+        accessToken = await generateAccessToken(client,req.locals.session.user_id);
+        //TODO remove oauthCode
+    }
+    
+    if(req.query.response_type==="refresh_token"){
 //grant_type==refresh_token的时候
 //https://openapi.baidu.com/oauth/2.0/token?
 //    grant_type=refresh_token&
@@ -117,38 +142,23 @@ app.get("/oauth/auth",loginInterceptor,async (req,res,next)=>{
 //    client_id=Va5yQRHlA4Fq4eR3LT0vuXV4&
 //    client_secret= 0rDSjzQ20XUj5itV7WRtznPQSzr5pVw2&
 //    scope=email
-app.all("/oauth/token",loginInterceptor,async (req,res,next)=>{
-    if(["refresh_token","authorization_code"].indexOf(req.query.response_type)==-1){
-        res.send(JSON.stringify({"status":2,"message":"unsupported response_type"}));
-        return;
+        accessToken = models.AccessToken.findOne({refresh_token:req.query.refresh_token});
     }
-    let client=models.Client.findOne({
-        _id:client_id,
-        secret:req.query.client_secret
-    });
-    if(!client){
-        res.send(JSON.stringify({"status":3,"message":"unknown client_id"}));
-        return;
-    }
-    if(req.query.response_type=="authorization_code"){
-        let oauthCode = await models.OauthCode.find({code:req.query.code})
-        //TODO check redirect_uri
-        if(!oauthCode){
-            res.send(JSON.stringify({"status":4,"message":"unknown code"}));
-            return;
-        }
-        let accessToken = await generateAccessToken(client,oauthCode);
+
+    if(accessToken){
         res.send(JSON.stringify({
             "access_token": accessToken.access_token,
+            //TODO should use expire time of access_token 
             "expires_in": 86400,
             "refresh_token": access_token.refresh_token,
             "scope": "basic",
             "session_key": access_token.session_key,
             "session_secret": access_token.session_secret,
         }));
-        return;
+    }else{
+        res.send(JSON.stringify({"error":5,"status":5,"message":"can't find access_token"}));
     }
-    //TODO  code换token，返回json
+    //标准返回示例
     //HTTP/1.1 200 OK
     //Content-Type: application/json
     //Cache-Control: no-store
@@ -166,6 +176,20 @@ app.all("/oauth/token",loginInterceptor,async (req,res,next)=>{
     //    "error_description": "Invalid authorization code: ANXxSNjwQDugOnqeikRMu2bKaXCdlLxn"
     //}
 });
+
+function generateAccessToken(client,user_id){
+    return new Promise((resolve,reject)=>{
+        let accessToken=new models.AccessToken();
+        accessToken.access_token=utils.uuid();
+        accessToken.refresh_token=utils.uuid();
+        accessToken.session_key=utils.uuid();
+        accessToken.session_secret=utils.uuid();
+        accessToken.user_id=user_id;
+        accessToken.client_id=client._id;
+        await accessToken.save();
+        resolve(accessToken);
+    });
+}
 
 
 app.get("/baidu_oauth_callback",loginInterceptor,(req,res,next)=>{

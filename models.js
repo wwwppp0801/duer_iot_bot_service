@@ -37,7 +37,6 @@ const AccessToken =mongoose.model("AccessToken", new Schema({
     refresh_token: { type: String, default: '' },
     session_key : { type: String, default: '' },
     session_secret: { type: String, default: '' },
-    refresh_token: { type: String, default: '' },
     expire_time: { type: Date, default: ()=>{
         let time=Date.now()+86400*30*1000;
         let d=new Date();
