@@ -1,0 +1,10 @@
+
+module.exports={
+    base_uri:"http://duer-iot.wangp.org",
+    baidu_oauth:{
+        client_id:"",
+        client_secret:"",
+        callback_url:"",
+    },
+    
+};

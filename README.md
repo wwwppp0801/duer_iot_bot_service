@@ -1,3 +1,7 @@
+## 整体流程
+
+![流程](design.png)
+
 ## bot服务：
 
     * 对用户
@@ -11,4 +15,4 @@
 
 ## bridge 服务
   
-    [bridge服务](http://wangp.org:8081/wangpeng/duer_iot_local_bridge)
+[bridge服务](http://wangp.org:8081/wangpeng/duer_iot_local_bridge)
