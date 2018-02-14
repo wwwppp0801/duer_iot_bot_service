@@ -43,7 +43,7 @@ app.get("/login",(req,res,next)=>{
     //跳转到baidu_oauth地址做第三方登录config.baidu_oauth.callback_url
     // state参数是一个json，里面有redirect_uri
     //生成Session，重定向到"/" 或 state.redirect_uri
-    let url=config.baidu_oauth.callback_url+"/baidu_oauth_callback";
+    let url=config.base_uri+"/baidu_oauth_callback";
     res.redirect("https://openapi.baidu.com/oauth/2.0/authorize?response_type=code&client_id="+config.baidu_oauth.client_id+"&redirect_uri="+encodeURIComponent(url)+"&scope=basic&display=mobile");
 });
 
@@ -193,9 +193,10 @@ function generateAccessToken(client,user_id){
 
 
 app.get("/baidu_oauth_callback",loginInterceptor,(req,res,next)=>{
-    //TODO 就是实现config.baidu_oauth.callback_url
+    //TODO 就是实现baidu_oauth的callback地址
     // state参数是一个json，里面有redirect_uri
     //生成Session，重定向到"/" 或 state.redirect_uri
+	
 });
 
 app.get("/bot_service",(req,res,next)=>{
